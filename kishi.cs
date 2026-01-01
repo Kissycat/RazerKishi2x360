@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using HidSharp; // 现代高性能 HID 库
 using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Targets;
@@ -10,6 +11,7 @@ namespace Hid2x360
 {
     class Program
     {
+        static bool is_init = true;
         static void Main(string[] args)
         {
             // 提升进程优先级，确保 Windows 优先调度本程序
@@ -23,10 +25,11 @@ namespace Hid2x360
                 client = new ViGEmClient();
                 virtPad = client.CreateXbox360Controller();
                 virtPad.Connect();
-                Console.WriteLine("虚拟 Xbox 360 手柄已载入系统！");
+                //Console.WriteLine("虚拟 Xbox 360 手柄已载入系统！");
             }
             catch (Exception ex)
             {
+                ConsoleManager.Show();
                 Console.WriteLine($"ViGEm 初始化失败: {ex.Message}");
                 Console.WriteLine("请前往https://github.com/nefarius/ViGEmBus/releases下载x360虚拟手柄");
                 return;
@@ -43,18 +46,29 @@ namespace Hid2x360
 		{
             // 2. 使用 HidSharp 查找设备
             var device = DeviceList.Local.GetHidDevices(vid, pid).FirstOrDefault();
-            bool continueRetry = true;
-            while (continueRetry)
+            int retry = 0;
+            while (true)
             {
                 if (device != null)
                 {
-                    Console.WriteLine($"检测到的手柄信息: {device?.ProductName} ({device?.DevicePath})");
-                    continueRetry = false; // 成功后退出循环
+                    is_init = false;
+                    retry = 0;
+                    //Console.WriteLine($"检测到的手柄信息: {device?.ProductName} ({device?.DevicePath})");
+                    break;
+                }
+                else if (!is_init && retry < 15)
+                {
+                    retry++;
+                    System.Threading.Thread.Sleep(1000);
+                    device = DeviceList.Local.GetHidDevices(vid, pid).FirstOrDefault();
+                    if (device != null)
+                    {break;}
                 }
                 else
                 {
+                    ConsoleManager.Show();
                     Console.WriteLine("未找到物理手柄，请检查连接或手柄的两个ID值。");
-                    Console.WriteLine("按任意键重试，按 'N' 退出...");
+                    Console.WriteLine("按任意键继续重试15秒，按 'N' 退出...");
                     ConsoleKeyInfo keyInfo = Console.ReadKey(true);
 
                     if (keyInfo.Key == ConsoleKey.N)
@@ -62,8 +76,8 @@ namespace Hid2x360
                         Environment.Exit(0);
                     }
                     device = DeviceList.Local.GetHidDevices(vid, pid).FirstOrDefault();
+                    Console.WriteLine(); // 换行
                 }
-                Console.WriteLine(); // 换行
             }
 
             // 3. 开启读取流
@@ -76,7 +90,8 @@ namespace Hid2x360
                     
                     byte[] inputBuffer = new byte[device.MaxInputReportLength];
 
-                    Console.WriteLine("正在变成x360的形状..");
+                    //Console.WriteLine("正在变成x360的形状..");
+                    ConsoleManager.Hide();
 
                     while (true)
                     {
@@ -92,16 +107,18 @@ namespace Hid2x360
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"读取中断: {ex.Message}");
+                            //ConsoleManager.Show();
+                            //Console.WriteLine($"读取中断: {ex.Message}");
                             break;
                         }
                     }
                 }
             }
-            else
-            {
-                Console.WriteLine("无法打开手柄流，请检查是否有其他程序占用（如Steam）。");
-            }
+            //else
+            //{
+            //    ConsoleManager.Show();
+            //    Console.WriteLine("无法打开手柄流，请检查是否有其他程序占用（如Steam）。");
+            //}
 		}
         private static void feedvPad(byte[] data, IXbox360Controller vpad)
         {
@@ -186,6 +203,37 @@ namespace Hid2x360
             if (val >= 104 && val <= 119) { vpad.SetButtonState(Xbox360Button.Up, true); vpad.SetButtonState(Xbox360Button.Left, true); } //112
         }
 
+    }
+
+    internal static class ConsoleManager
+    {
+        // 创建控制台窗口
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool AllocConsole();
+
+        // 销毁控制台窗口
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool FreeConsole();
+
+        [DllImport("kernel32.dll")]
+        static extern bool SetConsoleOutputCP(uint wCodePageID);
+
+        public static void Show()
+        {
+            AllocConsole();
+            // 重新导向标准输出流，否则 Console.WriteLine 依然无效
+            SetConsoleOutputCP(65001);
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            Console.InputEncoding = System.Text.Encoding.UTF8;
+            var writer = new System.IO.StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true };
+            Console.SetOut(writer);
+            Console.SetError(writer);
+            Console.Clear();
+        }
+
+        public static void Hide() => FreeConsole();
     }
 }
 
